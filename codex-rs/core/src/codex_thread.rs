@@ -141,6 +141,11 @@ impl CodexThread {
         self.codex.shutdown_and_wait().await
     }
 
+    pub async fn materialize_and_flush_rollout(&self) -> CodexResult<()> {
+        self.codex.session.ensure_rollout_materialized().await;
+        self.codex.session.flush_rollout().await?;
+        Ok(())
+    }
     /// Wait until the underlying session loop has terminated.
     pub async fn wait_until_terminated(&self) {
         self.codex.session_loop_termination.clone().await;

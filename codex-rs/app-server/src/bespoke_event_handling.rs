@@ -131,6 +131,21 @@ struct CommandExecutionCompletionItem {
     command_actions: Vec<V2ParsedCommand>,
 }
 
+async fn materialize_and_flush_rollout_after_terminal_turn(
+    conversation: &CodexThread,
+    conversation_id: &ThreadId,
+    event_name: &'static str,
+) {
+    if let Err(err) = conversation.materialize_and_flush_rollout().await {
+        error!(
+            %conversation_id,
+            event = event_name,
+            error = %err,
+            "failed to materialize and flush rollout after terminal turn event"
+        );
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn apply_bespoke_event_handling(
     event: Event,
@@ -186,6 +201,14 @@ pub(crate) async fn apply_bespoke_event_handling(
             thread_watch_manager
                 .note_turn_completed(&conversation_id.to_string(), turn_failed)
                 .await;
+
+            materialize_and_flush_rollout_after_terminal_turn(
+                conversation.as_ref(),
+                &conversation_id,
+                "turn_complete",
+            )
+            .await;
+
             handle_turn_complete(
                 conversation_id,
                 event_turn_id,
@@ -1118,6 +1141,14 @@ pub(crate) async fn apply_bespoke_event_handling(
             thread_watch_manager
                 .note_turn_interrupted(&conversation_id.to_string())
                 .await;
+
+            materialize_and_flush_rollout_after_terminal_turn(
+                conversation.as_ref(),
+                &conversation_id,
+                "turn_aborted",
+            )
+            .await;
+
             handle_turn_interrupted(
                 conversation_id,
                 event_turn_id,

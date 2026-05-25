@@ -137,6 +137,51 @@ A useful test should reproduce the lifecycle leak without relying on a real mode
 6. Expected: spawn succeeds because completed children no longer occupy live capacity.
 7. Also assert that completed child history remains available for inspection or resume when requested.
 
+## Related issue: #22779 and existing fix branch
+
+After starting from #16328, I found a newer related issue: #22779, `Completed subagents continue to count against thread limit`.
+
+That issue has an existing fix branch by `pengyou200902`:
+
+- https://github.com/openai/codex/issues/22779
+- https://github.com/pengyou200902/codex/tree/fix/subagent-thread-limit
+
+The branch addresses the same core lifecycle/accounting problem more directly.
+
+## Review of the existing fix direction
+
+The existing branch separates two concepts:
+
+1. retained agent metadata
+2. counted live execution quota
+
+The key design idea is:
+
+```text
+agent metadata exists
+    does not necessarily mean
+agent still consumes a live spawn slot
+```
+
+This matches the core runtime principle from this investigation:
+
+```text
+Restorable history should be separate from live execution-slot accounting.
+```
+
+The branch also handles reuse: if a completed agent receives new work later, it should reacquire a quota slot before execution.
+
+## Review questions / possible risks
+
+Important cases to check:
+
+1. Releasing quota should be idempotent. Repeated final-status events must not decrement the counter twice.
+2. Reusing a completed agent should reacquire quota before starting new work.
+3. If reacquiring quota fails, task state should not be partially updated.
+4. Resume and compaction should not restore completed agents as counted live agents.
+5. `list_agents` semantics should stay clear: listed/restorable is not the same as counted/running.
+6. `close_agent` should still remove metadata and release any remaining counted slot.
+
 ## Tradeoff
 
 The main tradeoff is between:
@@ -152,6 +197,8 @@ This issue can be explained as:
 
 > I investigated a Codex multi-agent runtime bug where completed subagents may remain counted as active after compaction, causing later `spawn_agent` calls to fail. The main insight is that an agent runtime needs to separate historical/restorable child-thread state from live execution-slot accounting. A completed subagent should remain inspectable, but it should not leak active capacity.
 
+After finding #22779, I shifted from duplicating the same patch to reviewing the existing fix direction. That is closer to real engineering work: identify the root cause, compare related reports, credit existing work, and evaluate the tradeoffs.
+
 This maps to broader agent-system design topics:
 
 - long-horizon agent state management
@@ -163,6 +210,6 @@ This maps to broader agent-system design topics:
 ## Next steps
 
 - Locate the exact test harness around `AgentControl`, `AgentRegistry`, and `ThreadManagerState`.
-- Add a failing regression test for completed subagents still consuming spawn slots after completion/compaction.
-- Decide whether the minimal fix belongs in `AgentRegistry`, completion watcher logic, persisted thread-spawn edge state, or resume/compaction restoration.
-- Keep the first patch narrow: prove the lifecycle leak and fix only the counting/restoration behavior.
+- Review the existing branch's tests around completed-agent slot release and slot reacquisition.
+- Decide whether any smaller follow-up contribution is still useful, such as documentation, a focused regression test, or a clearer lifecycle comment.
+- Avoid duplicating the same fix branch unless maintainers ask for an alternative implementation.
